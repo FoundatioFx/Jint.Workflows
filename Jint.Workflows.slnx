@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/Jint.Workflows/Jint.Workflows.csproj" />
+  <Project Path="test/Jint.Workflows.Tests/Jint.Workflows.Tests.csproj" />
+</Solution>

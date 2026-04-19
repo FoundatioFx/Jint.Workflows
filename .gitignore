@@ -1,0 +1,22 @@
+## Build results
+[Bb]in/
+[Oo]bj/
+artifacts/
+
+## NuGet
+*.nupkg
+*.snupkg
+
+## User/IDE files
+.vs/
+*.user
+*.suo
+*.DotSettings.user
+*.csproj.user
+
+## Rider
+.idea/
+
+## OS
+[Tt]humbs.db
+.DS_Store
