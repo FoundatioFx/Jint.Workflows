@@ -21,6 +21,13 @@ public sealed class WorkflowEngine
     private readonly List<Action<Engine>> _engineSetupActions = new();
     private string? _script;
     private string? _entryPoint;
+    private WorkflowTracker? _currentTracker;
+
+    /// <summary>
+    /// Whether the currently executing workflow is replaying its journal (pre-suspension history).
+    /// Returns <c>false</c> outside of execution or when no workflow is in flight.
+    /// </summary>
+    public bool IsReplaying => _currentTracker?.IsReplaying ?? false;
 
     /// <param name="configure">Optional engine configuration (timeouts, CLR access, etc.).</param>
     /// <param name="setup">Optional per-execution engine setup. Runs before suspend/step functions are installed.</param>
@@ -255,7 +262,10 @@ public sealed class WorkflowEngine
         }
 
         var tracker = new WorkflowTracker(state.Journal, journalValues, _stepFunctions, _asyncStepFunctions, _suspendFunctions, _timeProvider, cancellationToken);
+        _currentTracker = tracker;
 
+        try
+        {
         InstallDeterministicBuiltins(engine, tracker, state.RunId, state.StartedAtMs);
         InstallConsoleSuppression(engine, tracker);
 
