@@ -1,5 +1,12 @@
 # Jint.Workflows
 
+![Foundatio](https://raw.githubusercontent.com/FoundatioFx/Foundatio/master/media/foundatio-dark-bg.svg#gh-dark-mode-only "Foundatio")![Foundatio](https://raw.githubusercontent.com/FoundatioFx/Foundatio/master/media/foundatio.svg#gh-light-mode-only "Foundatio")
+
+[![Build status](https://github.com/FoundatioFx/Jint.Workflows/workflows/Build/badge.svg)](https://github.com/FoundatioFx/Jint.Workflows/actions)
+[![NuGet Version](http://img.shields.io/nuget/v/Jint.Workflows.svg?style=flat)](https://www.nuget.org/packages/Jint.Workflows/)
+[![feedz.io](https://img.shields.io/badge/endpoint.svg?url=https%3A%2F%2Ff.feedz.io%2Ffoundatio%2Ffoundatio%2Fshield%2FJint.Workflows%2Flatest)](https://f.feedz.io/foundatio/foundatio/packages/Jint.Workflows/latest/download)
+[![Discord](https://img.shields.io/discord/715744504891703319)](https://discord.gg/6HxgFCx)
+
 Durable JavaScript workflows for .NET using [Jint](https://github.com/sebastienros/jint). Write long-running orchestration logic in JavaScript with `await` syntax, suspend execution at any point, serialize the state, and resume later — potentially days later, in a different process.
 
 Built entirely on top of Jint's public API with zero engine modifications.
