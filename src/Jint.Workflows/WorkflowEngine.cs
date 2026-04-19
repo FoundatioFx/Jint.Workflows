@@ -365,6 +365,11 @@ public sealed class WorkflowEngine
 
         return WorkflowResult.Faulted(new InvalidOperationException(
             "Workflow did not complete or suspend. Ensure the entry function is async."));
+        }
+        finally
+        {
+            _currentTracker = null;
+        }
     }
 
     private void InstallDeterministicBuiltins(Engine engine, WorkflowTracker tracker, string runId, long startedAtMs)
@@ -376,10 +381,6 @@ public sealed class WorkflowEngine
             return JsValue.FromObject(engine, _timeProvider.GetUtcNow().ToUnixTimeMilliseconds());
         });
         engine.SetValue("__wf_now", nowFn);
-
-        var isReplayingFn = new ClrFunction(engine, "__wf_isReplaying", (_, _) =>
-            tracker.IsReplaying ? JsValue.True : JsValue.False);
-        engine.SetValue("__wf_isReplaying", isReplayingFn);
 
         var seed = runId.GetHashCode();
         engine.Evaluate($@"
