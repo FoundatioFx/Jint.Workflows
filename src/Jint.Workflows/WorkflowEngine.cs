@@ -367,6 +367,10 @@ public sealed class WorkflowEngine
         });
         engine.SetValue("__wf_now", nowFn);
 
+        var isReplayingFn = new ClrFunction(engine, "__wf_isReplaying", (_, _) =>
+            tracker.IsReplaying ? JsValue.True : JsValue.False);
+        engine.SetValue("__wf_isReplaying", isReplayingFn);
+
         var seed = runId.GetHashCode();
         engine.Evaluate($@"
             (function() {{
