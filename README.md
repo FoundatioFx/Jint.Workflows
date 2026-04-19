@@ -4,6 +4,8 @@ Durable JavaScript workflows for .NET using [Jint](https://github.com/sebastienr
 
 Built entirely on top of Jint's public API with zero engine modifications.
 
+Influenced by Vercel's [Workflow SDK](https://workflow-sdk.dev/), adapted for the .NET / Jint environment.
+
 ## How It Works
 
 Jint.Workflows uses **deterministic replay**. When a workflow suspends, the engine records a journal of completed operations. When resumed, the script re-executes from the start, fast-forwarding past completed operations using cached results from the journal, then continues from where it left off.
