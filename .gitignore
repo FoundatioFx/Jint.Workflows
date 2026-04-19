@@ -17,6 +17,9 @@ artifacts/
 ## Rider
 .idea/
 
+## Claude Code
+.claude/
+
 ## OS
 [Tt]humbs.db
 .DS_Store
