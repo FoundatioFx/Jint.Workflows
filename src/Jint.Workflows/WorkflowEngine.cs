@@ -444,6 +444,7 @@ public sealed class WorkflowEngine
         try
         {
         InstallDeterministicBuiltins(engine, tracker, state.RunId, state.StartedAtMs);
+        InstallContinueAsNew(engine, tracker);
         InstallConsoleSuppression(engine, tracker);
 
         foreach (var name in _suspendFunctions.Keys)
@@ -514,6 +515,21 @@ public sealed class WorkflowEngine
 
         engine.Advanced.ProcessTasks();
 
+        // continueAsNew is terminal for this run — return a fresh state.
+        if (tracker.IsContinuedAsNew)
+        {
+            var newArgsJson = JsonSerializer.Serialize<object?[]>(tracker.ContinueAsNewArgs ?? []);
+            var continuedState = new WorkflowState(
+                state.EntryPoint,
+                newArgsJson,
+                new List<JournalEntry>(),
+                Guid.NewGuid().ToString("N"),
+                _timeProvider.GetUtcNow().ToUnixTimeMilliseconds(),
+                metadata: state.Metadata,
+                parentRunId: state.RunId);
+            return WorkflowResult.ContinuedAsNew(continuedState);
+        }
+
         // Completion wins over suspension: Promise.race can resolve main() even
         // when other parallel waiters are still pending. Abandon them.
         if (string.Equals(completionStatus, "fulfilled", StringComparison.Ordinal))
@@ -549,6 +565,17 @@ public sealed class WorkflowEngine
         {
             _currentTracker = null;
         }
+    }
+
+    private static void InstallContinueAsNew(Engine engine, WorkflowTracker tracker)
+    {
+        engine.SetValue("continueAsNew", new ClrFunction(engine, "continueAsNew", (_, args) =>
+        {
+            tracker.SignalContinueAsNew(WorkflowTracker.ConvertArgsPublic(args));
+            // Return a pending promise so the caller's await never resolves;
+            // ExecuteWorkflow observes IsContinuedAsNew and short-circuits.
+            return engine.Advanced.RegisterPromise().Promise;
+        }));
     }
 
     private void InstallDeterministicBuiltins(Engine engine, WorkflowTracker tracker, string runId, long startedAtMs)

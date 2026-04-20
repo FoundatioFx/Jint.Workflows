@@ -52,6 +52,11 @@ public sealed class WorkflowResult
     {
         Exception = exception,
     };
+
+    internal static WorkflowResult ContinuedAsNew(WorkflowState state) => new(WorkflowStatus.ContinuedAsNew)
+    {
+        State = state,
+    };
 }
 
 public enum WorkflowStatus
@@ -59,6 +64,7 @@ public enum WorkflowStatus
     Suspended,
     Completed,
     Faulted,
+    ContinuedAsNew,
 }
 
 /// <summary>

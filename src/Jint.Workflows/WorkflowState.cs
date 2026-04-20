@@ -54,7 +54,8 @@ public sealed class WorkflowState
         string runId,
         long startedAtMs,
         int version = CurrentVersion,
-        Dictionary<string, string>? metadata = null)
+        Dictionary<string, string>? metadata = null,
+        string? parentRunId = null)
     {
         EntryPoint = entryPoint;
         ArgumentsJson = argumentsJson;
@@ -63,6 +64,7 @@ public sealed class WorkflowState
         StartedAtMs = startedAtMs;
         Version = version;
         Metadata = metadata ?? new Dictionary<string, string>();
+        ParentRunId = parentRunId;
     }
 
     public int Version { get; }
@@ -71,6 +73,13 @@ public sealed class WorkflowState
     public List<JournalEntry> Journal { get; }
     public string RunId { get; }
     public long StartedAtMs { get; }
+
+    /// <summary>
+    /// When this run was produced by <c>continueAsNew</c>, the previous run's
+    /// <see cref="RunId"/>. Null for fresh runs. Useful for tracing across
+    /// chained executions.
+    /// </summary>
+    public string? ParentRunId { get; }
 
     /// <summary>
     /// Arbitrary key-value metadata attached to the workflow state.

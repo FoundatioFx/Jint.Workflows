@@ -29,6 +29,16 @@ internal sealed class WorkflowTracker
     public bool IsSuspended { get; private set; }
     public SuspensionInfo? CurrentSuspension { get; private set; }
 
+    public bool IsContinuedAsNew { get; private set; }
+    public object?[]? ContinueAsNewArgs { get; private set; }
+
+    public void SignalContinueAsNew(object?[] args)
+    {
+        if (IsContinuedAsNew) return;
+        IsContinuedAsNew = true;
+        ContinueAsNewArgs = args;
+    }
+
     public bool IsReplaying => _encounterIndex < _journal.Count;
 
     public WorkflowTracker(
@@ -259,6 +269,8 @@ internal sealed class WorkflowTracker
         return jsResult;
     }
 
+
+    internal static object?[] ConvertArgsPublic(JsValue[] args) => ConvertArgsToClr(args);
 
     private static object?[] ConvertArgsToClr(JsValue[] args)
     {

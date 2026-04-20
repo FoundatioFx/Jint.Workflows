@@ -235,6 +235,30 @@ For callers using `IHttpClientFactory`, resolve the client from the factory and 
 .UseHttpClient(factory.CreateClient("jint-workflows"))
 ```
 
+### Continue As New
+
+Long-running/polling workflows shouldn't grow the journal forever. Call `continueAsNew(...args)` from the script to end the current run and produce a fresh state (new `RunId`, empty journal, same `EntryPoint`) that the orchestrator can schedule as a new run.
+
+```javascript
+async function poller(cursor) {
+    const page = await fetchPage(cursor);
+    if (!page.hasMore) return 'done';
+    continueAsNew(page.nextCursor);  // restart with new args, fresh journal
+}
+```
+
+```csharp
+var result = workflow.RunWorkflow(script, "poller", "start");
+
+if (result.Status == WorkflowStatus.ContinuedAsNew) {
+    // result.State has a new RunId, empty Journal, and result.State.ParentRunId
+    // points back to the previous run for tracing.
+    scheduler.Schedule(result.State!);
+}
+```
+
+`continueAsNew` is always available — no registration needed. It's a hard stop for the current execution; code after the call doesn't run.
+
 ### Named External Events
 
 Enable `waitForEvent(...)` for event-driven suspensions. The workflow pauses until the caller raises a named event or the timeout fires.

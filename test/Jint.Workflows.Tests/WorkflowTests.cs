@@ -1510,6 +1510,110 @@ public class WorkflowTests
     }
 
     // ============================================================
+    // Phase 5: continueAsNew
+    // ============================================================
+
+    [Fact]
+    public void ContinueAsNew_ReturnsFreshStateWithNewArgs()
+    {
+        var workflow = new WorkflowEngine();
+
+        var script = @"
+            async function main(cursor) {
+                continueAsNew('next-cursor');
+                return 'unreachable';
+            }";
+
+        var result = workflow.RunWorkflow(script, "main", "start");
+
+        Assert.Equal(WorkflowStatus.ContinuedAsNew, result.Status);
+        Assert.NotNull(result.State);
+        Assert.Empty(result.State!.Journal);
+        Assert.Equal("main", result.State.EntryPoint);
+        Assert.Equal("[\"next-cursor\"]", result.State.ArgumentsJson);
+    }
+
+    [Fact]
+    public void ContinueAsNew_ParentRunId_Chains()
+    {
+        var workflow = new WorkflowEngine();
+
+        var script = @"
+            async function main() {
+                continueAsNew();
+            }";
+
+        var r1 = workflow.RunWorkflow(script, "main");
+        Assert.Equal(WorkflowStatus.ContinuedAsNew, r1.Status);
+        var firstRunId = r1.State!.ParentRunId;
+        Assert.NotNull(firstRunId);
+
+        var r2 = workflow.RunWorkflow(script, r1.State.EntryPoint);
+        Assert.Equal(WorkflowStatus.ContinuedAsNew, r2.Status);
+        Assert.NotEqual(firstRunId, r2.State!.RunId);
+    }
+
+    [Fact]
+    public void ContinueAsNew_MultipleArgs_RoundTrip()
+    {
+        var workflow = new WorkflowEngine();
+
+        var script = @"
+            async function main() {
+                continueAsNew('a', 42, { x: 1 });
+            }";
+
+        var result = workflow.RunWorkflow(script, "main");
+
+        Assert.Equal(WorkflowStatus.ContinuedAsNew, result.Status);
+        Assert.Contains("\"a\"", result.State!.ArgumentsJson);
+        Assert.Contains("42", result.State.ArgumentsJson);
+        Assert.Contains("\"x\"", result.State.ArgumentsJson);
+    }
+
+    [Fact]
+    public void ContinueAsNew_AfterSteps_StartsFreshJournal()
+    {
+        var workflow = new WorkflowEngine();
+        int callCount = 0;
+        workflow.RegisterStepFunction("fetch", _ => { callCount++; return "page"; });
+
+        var script = @"
+            async function main(cursor) {
+                const data = await fetch();
+                continueAsNew(cursor + '+');
+            }";
+
+        var r1 = workflow.RunWorkflow(script, "main", "a");
+        Assert.Equal(WorkflowStatus.ContinuedAsNew, r1.Status);
+        Assert.Empty(r1.State!.Journal);
+        Assert.Equal(1, callCount);
+
+        // Running again with the fresh state re-executes the step.
+        var r2 = workflow.RunWorkflow(script, r1.State.EntryPoint, "a+");
+        Assert.Equal(WorkflowStatus.ContinuedAsNew, r2.Status);
+        Assert.Equal(2, callCount);
+    }
+
+    [Fact]
+    public void ContinueAsNew_CarriesMetadata()
+    {
+        var workflow = new WorkflowEngine();
+
+        var script = @"
+            async function main() { continueAsNew(); }";
+
+        var r1 = workflow.RunWorkflow(script, "main");
+        r1.State!.Metadata["tenant"] = "acme";
+
+        // Simulate orchestrator storing/reloading state and passing through
+        var json = r1.State.Serialize();
+        var restored = WorkflowState.Deserialize(json);
+        Assert.Equal("acme", restored.Metadata["tenant"]);
+        Assert.NotNull(restored.ParentRunId);
+    }
+
+    // ============================================================
     // Phase 4: External events (waitForEvent)
     // ============================================================
 
