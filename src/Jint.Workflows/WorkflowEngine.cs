@@ -178,6 +178,69 @@ public sealed class WorkflowEngine
     }
 
     /// <summary>
+    /// Register a <c>waitForEvent(nameOrNames, { timeout })</c> function for
+    /// named external-event suspensions. Pass either a single string or an
+    /// array of names; the workflow suspends until the caller invokes
+    /// <c>RaiseEvent</c> or <c>TimeoutEvent</c>.
+    /// <para>
+    /// Single-event form returns the payload directly. Multi-event form
+    /// returns <c>{ name, payload }</c> so the script can branch on which
+    /// event fired.
+    /// </para>
+    /// <para>
+    /// Resume with <c>RaiseEvent(...)</c> to deliver an event, or <c>TimeoutEvent(...)</c>
+    /// to cause the script's <c>waitForEvent</c> to throw a <c>TimeoutError</c>.
+    /// </para>
+    /// </summary>
+    public WorkflowEngine EnableExternalEvents()
+    {
+        RegisterSuspendFunction(WorkflowTracker.WaitForEventSuspendName, args =>
+        {
+            if (args.Length > 1 && args[1] is string timeoutStr && !string.IsNullOrEmpty(timeoutStr))
+            {
+                return DurationParser.Parse(timeoutStr, _timeProvider);
+            }
+            return null;
+        });
+
+        Execute(ExternalEventsPolyfill.Source);
+        return this;
+    }
+
+    /// <summary>
+    /// Resume a workflow suspended on <c>waitForEvent</c>, delivering a named event.
+    /// The script's <c>waitForEvent</c> returns the payload (single-event form) or
+    /// <c>{ name, payload }</c> (multi-event form).
+    /// </summary>
+    public WorkflowResult RaiseEvent(WorkflowState state, string eventName, object? payload = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(eventName);
+        return ResumeWorkflow(state, new { name = eventName, payload }, cancellationToken);
+    }
+
+    /// <inheritdoc cref="RaiseEvent(WorkflowState, string, object?, CancellationToken)" />
+    public WorkflowResult RaiseEvent(string script, WorkflowState state, string eventName, object? payload = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(eventName);
+        return ResumeWorkflow(script, state, new { name = eventName, payload }, cancellationToken);
+    }
+
+    /// <summary>
+    /// Resume a workflow suspended on <c>waitForEvent</c> with a timeout.
+    /// The script's <c>waitForEvent</c> throws a <c>TimeoutError</c>.
+    /// </summary>
+    public WorkflowResult TimeoutEvent(WorkflowState state, CancellationToken cancellationToken = default)
+    {
+        return ResumeWorkflow(state, new { __timeout = true }, cancellationToken);
+    }
+
+    /// <inheritdoc cref="TimeoutEvent(WorkflowState, CancellationToken)" />
+    public WorkflowResult TimeoutEvent(string script, WorkflowState state, CancellationToken cancellationToken = default)
+    {
+        return ResumeWorkflow(script, state, new { __timeout = true }, cancellationToken);
+    }
+
+    /// <summary>
     /// Register a browser-compatible <c>fetch</c> function. Workflows that don't
     /// call this method cannot make HTTP calls — <c>fetch</c> is undefined.
     /// <para>
@@ -451,6 +514,18 @@ public sealed class WorkflowEngine
 
         engine.Advanced.ProcessTasks();
 
+        // Completion wins over suspension: Promise.race can resolve main() even
+        // when other parallel waiters are still pending. Abandon them.
+        if (string.Equals(completionStatus, "fulfilled", StringComparison.Ordinal))
+        {
+            return WorkflowResult.Completed(completionValue);
+        }
+
+        if (string.Equals(completionStatus, "rejected", StringComparison.Ordinal))
+        {
+            return WorkflowResult.Faulted(new WorkflowFaultedException(completionValue));
+        }
+
         if (tracker.IsSuspended)
         {
             var newState = new WorkflowState(
@@ -465,16 +540,6 @@ public sealed class WorkflowEngine
             };
 
             return WorkflowResult.Suspended(newState, tracker.CurrentSuspension!);
-        }
-
-        if (string.Equals(completionStatus, "fulfilled", StringComparison.Ordinal))
-        {
-            return WorkflowResult.Completed(completionValue);
-        }
-
-        if (string.Equals(completionStatus, "rejected", StringComparison.Ordinal))
-        {
-            return WorkflowResult.Faulted(new WorkflowFaultedException(completionValue));
         }
 
         return WorkflowResult.Faulted(new InvalidOperationException(

@@ -235,6 +235,53 @@ For callers using `IHttpClientFactory`, resolve the client from the factory and 
 .UseHttpClient(factory.CreateClient("jint-workflows"))
 ```
 
+### Named External Events
+
+Enable `waitForEvent(...)` for event-driven suspensions. The workflow pauses until the caller raises a named event or the timeout fires.
+
+```csharp
+var workflow = new WorkflowEngine().EnableExternalEvents();
+
+var r1 = workflow.RunWorkflow(script, "main");
+// r1.Suspension.EventNames tells the caller which events are being awaited.
+
+// Deliver an event
+var r2 = workflow.RaiseEvent(script, r1.State!, "payment-received", new { amount = 100 });
+
+// Or time out
+var r2 = workflow.TimeoutEvent(script, r1.State!);
+```
+
+Single-event form returns the payload directly. Multi-event form returns `{ name, payload }` so the script can branch on which event fired.
+
+```javascript
+async function main() {
+    // Single event
+    const payment = await waitForEvent('payment-received');
+
+    // Single event with timeout — throws TimeoutError on timeout
+    try {
+        const signal = await waitForEvent('cancel', { timeout: '24h' });
+    } catch (e) {
+        if (e.name === 'TimeoutError') { /* ... */ }
+    }
+
+    // Multiple events — returns { name, payload }
+    const { name, payload } = await waitForEvent(['payment', 'cancel']);
+}
+```
+
+For more complex composition, combine `waitForEvent` with `Promise.race`:
+
+```javascript
+const result = await Promise.race([
+    waitForEvent('payment').then(p => ({ kind: 'paid', p })),
+    waitForEvent('cancel').then(() => ({ kind: 'canceled' })),
+]);
+```
+
+First-suspension-wins still applies — the orchestrator observes the first-scheduled event, resumes it, and the rest re-run on the next cycle.
+
 ### Fan-out / Fan-in with `Promise.all` and `Promise.race`
 
 Standard JavaScript `Promise.all` and `Promise.race` work over step and suspend calls. Each call takes the next journal slot in scheduling order, so replays are deterministic.

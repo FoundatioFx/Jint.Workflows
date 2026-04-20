@@ -73,6 +73,8 @@ internal sealed class WorkflowTracker
         return new ClrFunction(engine, name, (_, args) => HandleStep(engine, name, args));
     }
 
+    internal const string WaitForEventSuspendName = "__wf_wait_event";
+
     private JsValue HandleSuspend(Engine engine, string name, JsValue[] args)
     {
         var index = _encounterIndex++;
@@ -97,11 +99,28 @@ internal sealed class WorkflowTracker
         if (!IsSuspended)
         {
             IsSuspended = true;
-            CurrentSuspension = new SuspensionInfo(name, clrArgs, resumeAt);
+            CurrentSuspension = new SuspensionInfo(name, clrArgs, resumeAt, eventNames: ExtractEventNames(name, clrArgs));
         }
 
         var manualPromise = engine.Advanced.RegisterPromise();
         return manualPromise.Promise;
+    }
+
+    private static IReadOnlyList<string>? ExtractEventNames(string name, object?[] clrArgs)
+    {
+        if (name != WaitForEventSuspendName || clrArgs.Length == 0 || clrArgs[0] is null) return null;
+
+        if (clrArgs[0] is System.Collections.IEnumerable enumerable and not string)
+        {
+            var list = new List<string>();
+            foreach (var item in enumerable)
+            {
+                if (item is not null) list.Add(item.ToString() ?? "");
+            }
+            return list;
+        }
+
+        return new[] { clrArgs[0]!.ToString() ?? "" };
     }
 
     private JsValue HandleStep(Engine engine, string name, JsValue[] args)

@@ -1510,6 +1510,111 @@ public class WorkflowTests
     }
 
     // ============================================================
+    // Phase 4: External events (waitForEvent)
+    // ============================================================
+
+    [Fact]
+    public void WaitForEvent_SingleName_ReturnsPayload()
+    {
+        var workflow = new WorkflowEngine().EnableExternalEvents();
+
+        var script = @"
+            async function main() {
+                const p = await waitForEvent('payment');
+                return p.amount;
+            }";
+
+        var r1 = workflow.RunWorkflow(script, "main");
+        Assert.Equal(WorkflowStatus.Suspended, r1.Status);
+        Assert.Equal(new[] { "payment" }, r1.Suspension!.EventNames);
+
+        var r2 = workflow.RaiseEvent(script, r1.State!, "payment", new { amount = 100 });
+        Assert.Equal(WorkflowStatus.Completed, r2.Status);
+        Assert.Equal(100.0, r2.Value!.AsNumber());
+    }
+
+    [Fact]
+    public void WaitForEvent_MultipleNames_ReturnsNameAndPayload()
+    {
+        var workflow = new WorkflowEngine().EnableExternalEvents();
+
+        var script = @"
+            async function main() {
+                const r = await waitForEvent(['payment', 'cancel']);
+                return r.name + ':' + (r.payload ? r.payload.amount || '' : '');
+            }";
+
+        var r1 = workflow.RunWorkflow(script, "main");
+        Assert.Equal(new[] { "payment", "cancel" }, r1.Suspension!.EventNames);
+
+        var r2 = workflow.RaiseEvent(script, r1.State!, "cancel", null);
+        Assert.Equal("cancel:", r2.Value!.AsString());
+    }
+
+    [Fact]
+    public void WaitForEvent_TimeoutOption_SetsResumeAt()
+    {
+        var (workflow, time) = CreateEngine();
+        workflow.EnableExternalEvents();
+
+        var script = @"
+            async function main() {
+                try { return await waitForEvent('x', { timeout: '1h' }); }
+                catch (e) { return 'timeout:' + e.name; }
+            }";
+
+        var r1 = workflow.RunWorkflow(script, "main");
+        Assert.Equal(s_fixedStart.AddHours(1), r1.Suspension!.ResumeAt);
+
+        AdvanceTo(time, r1);
+        var r2 = workflow.TimeoutEvent(script, r1.State!);
+        Assert.Equal("timeout:TimeoutError", r2.Value!.AsString());
+    }
+
+    [Fact]
+    public void WaitForEvent_Replay_ReturnsCachedEvent()
+    {
+        var workflow = new WorkflowEngine().EnableExternalEvents();
+
+        var script = @"
+            async function main() {
+                const p = await waitForEvent('x');
+                const q = await waitForEvent('y');
+                return p.a + '-' + q.b;
+            }";
+
+        var r1 = workflow.RunWorkflow(script, "main");
+        var r2 = workflow.RaiseEvent(script, r1.State!, "x", new { a = "first" });
+        Assert.Equal(WorkflowStatus.Suspended, r2.Status);
+        Assert.Equal(new[] { "y" }, r2.Suspension!.EventNames);
+
+        var r3 = workflow.RaiseEvent(script, r2.State!, "y", new { b = "second" });
+        Assert.Equal("first-second", r3.Value!.AsString());
+    }
+
+    [Fact]
+    public void WaitForEvent_ComposedWithPromiseRace_ResumesFirstObserved()
+    {
+        var workflow = new WorkflowEngine().EnableExternalEvents();
+
+        var script = @"
+            async function main() {
+                const result = await Promise.race([
+                    waitForEvent('a').then(p => 'a:' + p.v),
+                    waitForEvent('b').then(p => 'b:' + p.v),
+                ]);
+                return result;
+            }";
+
+        // First-suspension-wins: only 'a' is observed. Orchestrator resumes 'a'.
+        var r1 = workflow.RunWorkflow(script, "main");
+        Assert.Equal(new[] { "a" }, r1.Suspension!.EventNames);
+
+        var r2 = workflow.RaiseEvent(script, r1.State!, "a", new { v = 1 });
+        Assert.Equal("a:1", r2.Value!.AsString());
+    }
+
+    // ============================================================
     // Phase 3: Promise.all / Promise.race — fan-out / fan-in
     // ============================================================
 

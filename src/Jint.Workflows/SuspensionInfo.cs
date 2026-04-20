@@ -6,12 +6,18 @@ namespace Jint.Workflows;
 /// </summary>
 public sealed class SuspensionInfo
 {
-    public SuspensionInfo(string functionName, object?[] arguments, DateTimeOffset? resumeAt = null, bool isRetry = false)
+    public SuspensionInfo(
+        string functionName,
+        object?[] arguments,
+        DateTimeOffset? resumeAt = null,
+        bool isRetry = false,
+        IReadOnlyList<string>? eventNames = null)
     {
         FunctionName = functionName;
         Arguments = arguments;
         ResumeAt = resumeAt;
         IsRetry = isRetry;
+        EventNames = eventNames;
     }
 
     /// <summary>
@@ -35,4 +41,10 @@ public sealed class SuspensionInfo
     /// When resuming a retry, no journal entry should be added — the step will re-execute.
     /// </summary>
     public bool IsRetry { get; }
+
+    /// <summary>
+    /// For <c>waitForEvent(...)</c> suspensions, the event names the workflow is waiting for.
+    /// Null for other kinds of suspensions.
+    /// </summary>
+    public IReadOnlyList<string>? EventNames { get; }
 }
