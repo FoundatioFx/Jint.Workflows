@@ -1,7 +1,7 @@
 import { defineConfig } from 'vitepress'
 
 export default defineConfig({
-  title: 'Jint.Workflows',
+  title: 'Jint Workflows',
   description: 'Durable JavaScript workflows for .NET using Jint',
   base: '/',
   ignoreDeadLinks: true,
@@ -14,7 +14,7 @@ export default defineConfig({
       light: 'https://raw.githubusercontent.com/FoundatioFx/Foundatio/master/media/foundatio.svg',
       dark: 'https://raw.githubusercontent.com/FoundatioFx/Foundatio/master/media/foundatio-dark-bg.svg'
     },
-    siteTitle: 'Jint.Workflows',
+    siteTitle: 'Jint Workflows',
     nav: [
       { text: 'Guide', link: '/guide/getting-started' },
       { text: 'GitHub', link: 'https://github.com/FoundatioFx/Jint.Workflows' }

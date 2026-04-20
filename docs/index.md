@@ -2,12 +2,12 @@
 layout: home
 
 hero:
-  name: Jint.Workflows
+  name: Jint Workflows
   text: Durable JavaScript workflows for .NET
   tagline: Write long-running orchestration in JavaScript. Suspend, serialize, and resume — potentially days later, in a different process.
   image:
     src: https://raw.githubusercontent.com/FoundatioFx/Foundatio/main/media/foundatio-icon.png
-    alt: Jint.Workflows
+    alt: Jint Workflows
   actions:
     - theme: brand
       text: Get Started

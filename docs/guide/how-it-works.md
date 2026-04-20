@@ -1,6 +1,6 @@
 # How It Works
 
-Jint.Workflows uses **deterministic replay**. This page explains the model so you can reason about what's safe and what's not.
+Jint.Workflows uses **deterministic replay** — the same model Azure Durable Functions, Vercel's Workflow SDK, Temporal, and Restate use. This page explains the model so you can reason about what's safe and what's not.
 
 ## The journal
 
