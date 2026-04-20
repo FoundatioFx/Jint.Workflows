@@ -1,3 +1,4 @@
+using Foundatio.Resilience;
 using Jint.Workflows;
 using Microsoft.Extensions.Time.Testing;
 
@@ -1330,5 +1331,205 @@ public class WorkflowTests
         AdvanceTo(time, result);
         var result2 = workflow.ResumeWorkflow(script, result.State!);
         Assert.Equal("Order ORD-999: shipped", result2.Value!.AsString());
+    }
+
+    // ============================================================
+    // Phase 1: Resilience policies on step functions
+    // ============================================================
+
+    private static ResiliencePolicy NoDelayPolicy(int maxAttempts) =>
+        new ResiliencePolicyBuilder()
+            .WithMaxAttempts(maxAttempts)
+            .WithDelay(TimeSpan.Zero)
+            .Build();
+
+    [Fact]
+    public void StepPolicy_SucceedsFirstTry_NoRetries()
+    {
+        var (workflow, _) = CreateEngine();
+        int callCount = 0;
+        workflow.RegisterStepFunction("call", _ =>
+        {
+            callCount++;
+            return "ok";
+        }, NoDelayPolicy(maxAttempts: 5));
+
+        var result = workflow.RunWorkflow(@"
+            async function main() { return await call(); }
+        ", "main");
+
+        Assert.Equal(WorkflowStatus.Completed, result.Status);
+        Assert.Equal("ok", result.Value!.AsString());
+        Assert.Equal(1, callCount);
+    }
+
+    [Fact]
+    public void StepPolicy_RetriesOnTransientFailureThenSucceeds()
+    {
+        var (workflow, _) = CreateEngine();
+        int callCount = 0;
+        workflow.RegisterStepFunction("flaky", _ =>
+        {
+            callCount++;
+            if (callCount < 3) throw new InvalidOperationException("transient");
+            return 42;
+        }, NoDelayPolicy(maxAttempts: 5));
+
+        var result = workflow.RunWorkflow(@"
+            async function main() { return await flaky(); }
+        ", "main");
+
+        Assert.Equal(WorkflowStatus.Completed, result.Status);
+        Assert.Equal(42.0, result.Value!.AsNumber());
+        Assert.Equal(3, callCount);
+    }
+
+    [Fact]
+    public void StepPolicy_ExhaustedAttempts_StepFails()
+    {
+        var (workflow, _) = CreateEngine();
+        int callCount = 0;
+        workflow.RegisterStepFunction("alwaysFails", _ =>
+        {
+            callCount++;
+            throw new InvalidOperationException("nope");
+        }, NoDelayPolicy(maxAttempts: 3));
+
+        var result = workflow.RunWorkflow(@"
+            async function main() {
+                try { return await alwaysFails(); }
+                catch (e) { return 'caught'; }
+            }
+        ", "main");
+
+        Assert.Equal(WorkflowStatus.Completed, result.Status);
+        Assert.Equal("caught", result.Value!.AsString());
+        Assert.Equal(3, callCount);
+    }
+
+    [Fact]
+    public void StepPolicy_UnhandledExceptionBypassesRetry()
+    {
+        var workflow = new WorkflowEngine();
+        int callCount = 0;
+        var policy = new ResiliencePolicyBuilder()
+            .WithMaxAttempts(5)
+            .WithDelay(TimeSpan.Zero)
+            .WithUnhandledException<ArgumentException>()
+            .Build();
+
+        workflow.RegisterStepFunction("step", _ =>
+        {
+            callCount++;
+            throw new ArgumentException("bad input");
+        }, policy);
+
+        var result = workflow.RunWorkflow(@"
+            async function main() {
+                try { return await step(); }
+                catch (e) { return 'caught'; }
+            }
+        ", "main");
+
+        Assert.Equal("caught", result.Value!.AsString());
+        Assert.Equal(1, callCount);
+    }
+
+    [Fact]
+    public void StepPolicy_RetryableStepException_BypassesPolicyAndSuspends()
+    {
+        var (workflow, time) = CreateEngine();
+        int callCount = 0;
+        workflow.RegisterStepFunction("longRetry", _ =>
+        {
+            callCount++;
+            throw new RetryableStepException("maintenance", TimeSpan.FromMinutes(10));
+        }, NoDelayPolicy(maxAttempts: 5));
+
+        var result = workflow.RunWorkflow(@"
+            async function main() { return await longRetry(); }
+        ", "main");
+
+        Assert.Equal(WorkflowStatus.Suspended, result.Status);
+        Assert.Equal("longRetry", result.Suspension!.FunctionName);
+        Assert.True(result.Suspension.IsRetry);
+        Assert.Equal(s_fixedStart.AddMinutes(10), result.Suspension.ResumeAt);
+        Assert.Equal(1, callCount); // bypassed retry
+    }
+
+    [Fact]
+    public void StepPolicy_ReplayReturnsCachedValue_NoReinvocation()
+    {
+        var (workflow, time) = CreateEngine();
+        int callCount = 0;
+        workflow.RegisterStepFunction("once", _ =>
+        {
+            callCount++;
+            return "value";
+        }, NoDelayPolicy(maxAttempts: 5));
+        workflow.RegisterSuspendFunction("wait");
+
+        var script = @"
+            async function main() {
+                var v = await once();
+                await wait();
+                return v + '!';
+            }";
+
+        var r1 = workflow.RunWorkflow(script, "main");
+        Assert.Equal(WorkflowStatus.Suspended, r1.Status);
+        Assert.Equal(1, callCount);
+
+        var r2 = workflow.ResumeWorkflow(script, r1.State!, resumeValue: null);
+        Assert.Equal("value!", r2.Value!.AsString());
+        Assert.Equal(1, callCount); // did not re-execute on replay
+    }
+
+    [Fact]
+    public void StepPolicy_AsyncStep_RetriesThenSucceeds()
+    {
+        var (workflow, _) = CreateEngine();
+        int callCount = 0;
+        workflow.RegisterStepFunction("fetch",
+            async (_, ct) =>
+            {
+                callCount++;
+                if (callCount < 2)
+                    throw new InvalidOperationException("flaky");
+                await Task.Yield();
+                return (object?)"ok";
+            },
+            NoDelayPolicy(maxAttempts: 3));
+
+        var result = workflow.RunWorkflow(@"
+            async function main() { return await fetch(); }
+        ", "main");
+
+        Assert.Equal("ok", result.Value!.AsString());
+        Assert.Equal(2, callCount);
+    }
+
+    [Fact]
+    public void StepPolicy_ByName_ResolvesFromProvider()
+    {
+        var (workflow, _) = CreateEngine();
+        var provider = new ResiliencePolicyProviderBuilder()
+            .WithPolicy("retry3", b => b.WithMaxAttempts(3).WithDelay(TimeSpan.Zero));
+        workflow.UseResiliencePolicyProvider(provider);
+
+        int callCount = 0;
+        workflow.RegisterStepFunction("step", _ =>
+        {
+            callCount++;
+            if (callCount < 3) throw new InvalidOperationException("x");
+            return "done";
+        }, policyName: "retry3");
+
+        var result = workflow.RunWorkflow(@"
+            async function main() { return await step(); }
+        ", "main");
+
+        Assert.Equal("done", result.Value!.AsString());
+        Assert.Equal(3, callCount);
     }
 }

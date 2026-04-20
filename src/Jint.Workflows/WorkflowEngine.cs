@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Foundatio.Resilience;
 using Jint.Native;
 using Jint.Runtime.Interop;
 
@@ -18,7 +19,9 @@ public sealed class WorkflowEngine
     private readonly Dictionary<string, Func<object?[], DateTimeOffset?>?> _suspendFunctions = new();
     private readonly Dictionary<string, Func<object?[], object?>> _stepFunctions = new();
     private readonly Dictionary<string, Func<object?[], CancellationToken, Task<object?>>> _asyncStepFunctions = new();
+    private readonly Dictionary<string, StepPolicyBinding> _stepPolicies = new();
     private readonly List<Action<Engine>> _engineSetupActions = new();
+    private IResiliencePolicyProvider? _policyProvider;
     private string? _script;
     private string? _entryPoint;
     private WorkflowTracker? _currentTracker;
@@ -96,6 +99,37 @@ public sealed class WorkflowEngine
     public void RegisterStepFunction(string name, Func<object?[], object?> implementation)
     {
         _stepFunctions[name] = implementation;
+        _stepPolicies.Remove(name);
+    }
+
+    /// <summary>
+    /// Register a synchronous step function with an in-process resilience policy
+    /// (Foundatio.Resilience). Retries happen within a single step execution — if the
+    /// policy exhausts attempts, the step's failure is journaled.
+    /// <para>
+    /// For retries that should survive process restarts, throw
+    /// <see cref="RetryableStepException"/> from the implementation instead —
+    /// it bypasses the policy and suspends the workflow with <c>ResumeAt</c>.
+    /// </para>
+    /// </summary>
+    public void RegisterStepFunction(string name, Func<object?[], object?> implementation, IResiliencePolicy policy)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        _stepFunctions[name] = implementation;
+        _stepPolicies[name] = new StepPolicyBinding(policy, null);
+        BypassRetryableStepException(policy);
+    }
+
+    /// <summary>
+    /// Register a synchronous step function that resolves its resilience policy
+    /// from the configured <see cref="IResiliencePolicyProvider"/> at execution time.
+    /// Call <see cref="UseResiliencePolicyProvider"/> to supply the provider.
+    /// </summary>
+    public void RegisterStepFunction(string name, Func<object?[], object?> implementation, string policyName)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(policyName);
+        _stepFunctions[name] = implementation;
+        _stepPolicies[name] = new StepPolicyBinding(null, policyName);
     }
 
     /// <summary>
@@ -106,6 +140,50 @@ public sealed class WorkflowEngine
     public void RegisterStepFunction(string name, Func<object?[], CancellationToken, Task<object?>> implementation)
     {
         _asyncStepFunctions[name] = implementation;
+        _stepPolicies.Remove(name);
+    }
+
+    /// <summary>
+    /// Register an async step function with an in-process resilience policy
+    /// (Foundatio.Resilience). See the sync overload for retry semantics.
+    /// </summary>
+    public void RegisterStepFunction(string name, Func<object?[], CancellationToken, Task<object?>> implementation, IResiliencePolicy policy)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+        _asyncStepFunctions[name] = implementation;
+        _stepPolicies[name] = new StepPolicyBinding(policy, null);
+        BypassRetryableStepException(policy);
+    }
+
+    /// <summary>
+    /// Register an async step function that resolves its resilience policy
+    /// from the configured <see cref="IResiliencePolicyProvider"/> at execution time.
+    /// </summary>
+    public void RegisterStepFunction(string name, Func<object?[], CancellationToken, Task<object?>> implementation, string policyName)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(policyName);
+        _asyncStepFunctions[name] = implementation;
+        _stepPolicies[name] = new StepPolicyBinding(null, policyName);
+    }
+
+    /// <summary>
+    /// Supply a resilience policy provider used to resolve step policies registered by name.
+    /// </summary>
+    public WorkflowEngine UseResiliencePolicyProvider(IResiliencePolicyProvider provider)
+    {
+        ArgumentNullException.ThrowIfNull(provider);
+        _policyProvider = provider;
+        return this;
+    }
+
+    private static void BypassRetryableStepException(IResiliencePolicy policy)
+    {
+        // RetryableStepException signals "retry at the workflow level, across process restarts."
+        // It must escape any in-process policy immediately.
+        if (policy is ResiliencePolicy concrete)
+        {
+            concrete.UnhandledExceptions.Add(typeof(RetryableStepException));
+        }
     }
 
     /// <summary>
@@ -261,7 +339,7 @@ public sealed class WorkflowEngine
                 : JsValue.Undefined);
         }
 
-        var tracker = new WorkflowTracker(state.Journal, journalValues, _stepFunctions, _asyncStepFunctions, _suspendFunctions, _timeProvider, cancellationToken);
+        var tracker = new WorkflowTracker(state.Journal, journalValues, _stepFunctions, _asyncStepFunctions, _suspendFunctions, _stepPolicies, _policyProvider, _timeProvider, cancellationToken);
         _currentTracker = tracker;
 
         try
@@ -499,3 +577,5 @@ public sealed class WorkflowEngine
         return result;
     }
 }
+
+internal readonly record struct StepPolicyBinding(IResiliencePolicy? Policy, string? PolicyName);

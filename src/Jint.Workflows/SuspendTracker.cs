@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Foundatio.Resilience;
 using Jint.Native;
 using Jint.Runtime.Interop;
 
@@ -18,6 +19,8 @@ internal sealed class WorkflowTracker
     private readonly Dictionary<string, Func<object?[], object?>> _stepImplementations;
     private readonly Dictionary<string, Func<object?[], CancellationToken, Task<object?>>> _asyncStepImplementations;
     private readonly Dictionary<string, Func<object?[], DateTimeOffset?>?> _suspendCallbacks;
+    private readonly Dictionary<string, StepPolicyBinding> _stepPolicies;
+    private readonly IResiliencePolicyProvider? _policyProvider;
     private readonly TimeProvider _timeProvider;
     private readonly CancellationToken _cancellationToken;
 
@@ -34,6 +37,8 @@ internal sealed class WorkflowTracker
         Dictionary<string, Func<object?[], object?>> stepImplementations,
         Dictionary<string, Func<object?[], CancellationToken, Task<object?>>> asyncStepImplementations,
         Dictionary<string, Func<object?[], DateTimeOffset?>?> suspendCallbacks,
+        Dictionary<string, StepPolicyBinding> stepPolicies,
+        IResiliencePolicyProvider? policyProvider,
         TimeProvider timeProvider,
         CancellationToken cancellationToken)
     {
@@ -42,9 +47,20 @@ internal sealed class WorkflowTracker
         _stepImplementations = stepImplementations;
         _asyncStepImplementations = asyncStepImplementations;
         _suspendCallbacks = suspendCallbacks;
+        _stepPolicies = stepPolicies;
+        _policyProvider = policyProvider;
         _timeProvider = timeProvider;
         _cancellationToken = cancellationToken;
         NewJournal = new List<JournalEntry>(journal);
+    }
+
+    private IResiliencePolicy? ResolvePolicy(string name)
+    {
+        if (!_stepPolicies.TryGetValue(name, out var binding)) return null;
+        if (binding.Policy is not null) return binding.Policy;
+        if (binding.PolicyName is not null && _policyProvider is not null)
+            return _policyProvider.GetPolicy(binding.PolicyName);
+        return null;
     }
 
     public ClrFunction CreateSuspendFunction(Engine engine, string name)
@@ -114,14 +130,32 @@ internal sealed class WorkflowTracker
 
     private JsValue ExecuteSyncStep(Engine engine, string name, object?[] clrArgs, Func<object?[], object?> impl)
     {
+        var policy = ResolvePolicy(name);
         object? clrResult;
         try
         {
-            clrResult = impl(clrArgs);
+            if (policy is not null)
+            {
+                clrResult = policy.ExecuteAsync<object?>(
+                    _ => new ValueTask<object?>(impl(clrArgs)),
+                    _cancellationToken).GetAwaiter().GetResult();
+            }
+            else
+            {
+                clrResult = impl(clrArgs);
+            }
+        }
+        catch (AggregateException aex) when (aex.InnerException is RetryableStepException rex)
+        {
+            return HandleRetryable(engine, name, clrArgs, rex);
         }
         catch (RetryableStepException rex)
         {
             return HandleRetryable(engine, name, clrArgs, rex);
+        }
+        catch (AggregateException aex) when (aex.InnerException is not null)
+        {
+            return HandleStepError(engine, name, aex.InnerException);
         }
         catch (Exception ex)
         {
@@ -133,12 +167,22 @@ internal sealed class WorkflowTracker
 
     private JsValue ExecuteAsyncStep(Engine engine, string name, object?[] clrArgs, Func<object?[], CancellationToken, Task<object?>> impl)
     {
+        var policy = ResolvePolicy(name);
         object? clrResult;
         try
         {
-            // Block on the async result. The script is already synchronous at this point
-            // (we're inside a ClrFunction call). The CancellationToken flows through.
-            clrResult = impl(clrArgs, _cancellationToken).GetAwaiter().GetResult();
+            if (policy is not null)
+            {
+                clrResult = policy.ExecuteAsync<object?>(
+                    async ct => await impl(clrArgs, ct).ConfigureAwait(false),
+                    _cancellationToken).GetAwaiter().GetResult();
+            }
+            else
+            {
+                // Block on the async result. The script is already synchronous at this point
+                // (we're inside a ClrFunction call). The CancellationToken flows through.
+                clrResult = impl(clrArgs, _cancellationToken).GetAwaiter().GetResult();
+            }
         }
         catch (AggregateException aex) when (aex.InnerException is RetryableStepException rex)
         {
