@@ -175,6 +175,66 @@ workflow.RegisterStepFunction("callApi", args =>
 
 The orchestrator sees `Suspension.ResumeAt` set to 5 minutes from now and can retry automatically.
 
+### In-process Retries with Foundatio.Resilience
+
+Register a step with an `IResiliencePolicy` for transient-failure retries that complete within a single step execution. Foundatio handles the retry loop, delays, jitter, and circuit breaker; the step's final outcome is journaled atomically.
+
+```csharp
+var policy = new ResiliencePolicyBuilder()
+    .WithMaxAttempts(5)
+    .WithExponentialDelay(TimeSpan.FromSeconds(1))
+    .WithJitter()
+    .WithShouldRetry((attempt, ex) => ex is HttpRequestException)
+    .Build();
+
+workflow.RegisterStepFunction("callApi", impl, policy);
+// or by name via IResiliencePolicyProvider
+workflow.UseResiliencePolicyProvider(provider);
+workflow.RegisterStepFunction("callApi", impl, policyName: "http");
+```
+
+Use an in-process policy for short/transient failures (seconds). Use `RetryableStepException` for long retries (minutes to days) that should suspend the workflow and survive process restarts — throwing it bypasses any policy.
+
+### Browser-compatible `fetch` (opt-in)
+
+Enable a `fetch(input, init)` function that behaves like the standard WHATWG fetch. It is **not registered by default** — workflows that don't call `EnableFetch` cannot make HTTP calls.
+
+```csharp
+var http = new HttpClient();
+
+var workflow = new WorkflowEngine()
+    .EnableFetch(b => b
+        .UseHttpClient(http)
+        .UseDefaultPolicy(new ResiliencePolicyBuilder()
+            .WithMaxAttempts(5)
+            .WithExponentialDelay(TimeSpan.FromSeconds(1))
+            .WithJitter()
+            .WithShouldRetry((n, ex) => ex is HttpRequestException or TaskCanceledException)
+            .Build())
+        .UseDefaultTimeout(TimeSpan.FromSeconds(30)));
+```
+
+Scripts use the standard fetch API:
+
+```javascript
+const res = await fetch('https://api.example.com/orders', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sku: 'WIDGET' })
+});
+
+if (!res.ok) throw new Error(`HTTP ${res.status}`);
+const data = await res.json();
+```
+
+`Response` supports `ok`, `status`, `statusText`, `url`, `redirected`, `headers`, `bodyUsed`, `.text()`, `.json()`, and `.clone()`. Header keys are lowercased. Each fetch is journaled as a single step — replays return the buffered response without hitting the network.
+
+For callers using `IHttpClientFactory`, resolve the client from the factory and pass it:
+
+```csharp
+.UseHttpClient(factory.CreateClient("jint-workflows"))
+```
+
 ### Script Versioning
 
 The script is **not stored** in the serialized state. You provide it at both start and resume time. This means you can update the script between suspensions — fix bugs, add behavior after a suspend point — as long as the journal shape remains compatible (same sequence of step/suspend calls up to the resume point).
@@ -269,7 +329,9 @@ var result2 = workflow.ResumeWorkflow(result.State!); // No script param needed
 | Method | Description |
 |--------|-------------|
 | `RegisterSuspendFunction(name, computeResumeAt?)` | Register a function that pauses execution when `await`ed. Optional callback computes `ResumeAt` |
-| `RegisterStepFunction(name, implementation)` | Register a journaled C# function |
+| `RegisterStepFunction(name, implementation, policy?)` | Register a journaled C# function. Optional `IResiliencePolicy` or `policyName` for in-process retries |
+| `UseResiliencePolicyProvider(provider)` | Supply an `IResiliencePolicyProvider` for step policies registered by name |
+| `EnableFetch(configure)` | Opt-in WHATWG `fetch` registration |
 | `SetScript(script, entryPoint)` | Set the default script and entry function |
 | `RunWorkflow(script, entryPoint, args)` | Start a new workflow |
 | `ResumeWorkflow(script, state, resumeValue?)` | Resume with explicit script |

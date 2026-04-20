@@ -2,6 +2,7 @@ using System.Text.Json;
 using Foundatio.Resilience;
 using Jint.Native;
 using Jint.Runtime.Interop;
+using Jint.Workflows.Fetch;
 
 namespace Jint.Workflows;
 
@@ -173,6 +174,41 @@ public sealed class WorkflowEngine
     {
         ArgumentNullException.ThrowIfNull(provider);
         _policyProvider = provider;
+        return this;
+    }
+
+    /// <summary>
+    /// Register a browser-compatible <c>fetch</c> function. Workflows that don't
+    /// call this method cannot make HTTP calls — <c>fetch</c> is undefined.
+    /// <para>
+    /// Internally registers a journaled async step (<c>__wf_fetch_internal</c>) and
+    /// injects a JS polyfill that wraps the step result in a <c>Response</c>-like
+    /// object with <c>.json()</c>, <c>.text()</c>, and <c>.clone()</c> methods.
+    /// </para>
+    /// </summary>
+    public WorkflowEngine EnableFetch(Action<FetchBuilder> configure)
+    {
+        ArgumentNullException.ThrowIfNull(configure);
+
+        var builder = new FetchBuilder();
+        configure(builder);
+
+        // Eager validation — throws here if neither client source was configured.
+        _ = builder.ResolveClient();
+
+        Task<object?> Impl(object?[] args, CancellationToken ct) =>
+            FetchStep.ExecuteAsync(builder, args, ct);
+
+        if (builder.DefaultPolicy is not null)
+        {
+            RegisterStepFunction("__wf_fetch_internal", Impl, builder.DefaultPolicy);
+        }
+        else
+        {
+            RegisterStepFunction("__wf_fetch_internal", Impl);
+        }
+
+        Execute(FetchPolyfill.Source);
         return this;
     }
 
