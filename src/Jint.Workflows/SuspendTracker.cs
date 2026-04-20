@@ -90,8 +90,15 @@ internal sealed class WorkflowTracker
             resumeAt = callback(clrArgs);
         }
 
-        IsSuspended = true;
-        CurrentSuspension = new SuspensionInfo(name, clrArgs, resumeAt);
+        // First-suspension-wins: if another suspend (or retryable step) already
+        // captured the suspension in this execution, don't overwrite it.
+        // Subsequent pending promises stay pending; the later suspends re-run
+        // on the next resume.
+        if (!IsSuspended)
+        {
+            IsSuspended = true;
+            CurrentSuspension = new SuspensionInfo(name, clrArgs, resumeAt);
+        }
 
         var manualPromise = engine.Advanced.RegisterPromise();
         return manualPromise.Promise;
@@ -206,9 +213,12 @@ internal sealed class WorkflowTracker
 
     private JsValue HandleRetryable(Engine engine, string name, object?[] clrArgs, RetryableStepException rex)
     {
-        IsSuspended = true;
-        var resumeAt = _timeProvider.GetUtcNow().Add(rex.RetryAfter);
-        CurrentSuspension = new SuspensionInfo(name, clrArgs, resumeAt, isRetry: true);
+        if (!IsSuspended)
+        {
+            IsSuspended = true;
+            var resumeAt = _timeProvider.GetUtcNow().Add(rex.RetryAfter);
+            CurrentSuspension = new SuspensionInfo(name, clrArgs, resumeAt, isRetry: true);
+        }
 
         var manualPromise = engine.Advanced.RegisterPromise();
         return manualPromise.Promise;

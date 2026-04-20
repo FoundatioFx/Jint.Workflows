@@ -1509,6 +1509,116 @@ public class WorkflowTests
         Assert.Equal(2, callCount);
     }
 
+    // ============================================================
+    // Phase 3: Promise.all / Promise.race — fan-out / fan-in
+    // ============================================================
+
+    [Fact]
+    public void PromiseAll_ThreeSteps_AllComplete()
+    {
+        var workflow = new WorkflowEngine();
+        workflow.RegisterStepFunction("a", _ => 10);
+        workflow.RegisterStepFunction("b", _ => 20);
+        workflow.RegisterStepFunction("c", _ => 30);
+
+        var result = workflow.RunWorkflow(@"
+            async function main() {
+                const [x, y, z] = await Promise.all([a(), b(), c()]);
+                return x + y + z;
+            }
+        ", "main");
+
+        Assert.Equal(WorkflowStatus.Completed, result.Status);
+        Assert.Equal(60.0, result.Value!.AsNumber());
+    }
+
+    [Fact]
+    public void PromiseAll_StepAndSuspend_StepCompletes_SuspensionCaptured()
+    {
+        var (workflow, time) = CreateEngine();
+        int callCount = 0;
+        workflow.RegisterStepFunction("load", _ => { callCount++; return "data"; });
+
+        var script = @"
+            async function main() {
+                const [d, _] = await Promise.all([load(), sleep('1h')]);
+                return d;
+            }";
+
+        var r1 = workflow.RunWorkflow(script, "main");
+        Assert.Equal(WorkflowStatus.Suspended, r1.Status);
+        Assert.Equal("sleep", r1.Suspension!.FunctionName);
+        Assert.Equal(1, callCount);
+
+        AdvanceTo(time, r1);
+        var r2 = workflow.ResumeWorkflow(script, r1.State!);
+
+        Assert.Equal(WorkflowStatus.Completed, r2.Status);
+        Assert.Equal("data", r2.Value!.AsString());
+        Assert.Equal(1, callCount);
+    }
+
+    [Fact]
+    public void PromiseAll_StepThrows_WorkflowFaults()
+    {
+        var workflow = new WorkflowEngine();
+        workflow.RegisterStepFunction("ok", _ => 1);
+        workflow.RegisterStepFunction("boom", _ => throw new InvalidOperationException("nope"));
+
+        var result = workflow.RunWorkflow(@"
+            async function main() {
+                try { return await Promise.all([ok(), boom()]); }
+                catch (e) { return 'caught:' + e.message; }
+            }
+        ", "main");
+
+        Assert.Equal(WorkflowStatus.Completed, result.Status);
+        Assert.StartsWith("caught:", result.Value!.AsString());
+    }
+
+    [Fact]
+    public void PromiseRace_FirstStepWins()
+    {
+        var workflow = new WorkflowEngine();
+        workflow.RegisterStepFunction("a", _ => "first");
+        workflow.RegisterStepFunction("b", _ => "second");
+
+        var result = workflow.RunWorkflow(@"
+            async function main() {
+                return await Promise.race([a(), b()]);
+            }
+        ", "main");
+
+        Assert.Equal("first", result.Value!.AsString());
+    }
+
+    [Fact]
+    public void MultipleSuspensions_FirstWins_SecondRunsOnNextResume()
+    {
+        var (workflow, time) = CreateEngine();
+
+        var script = @"
+            async function main() {
+                const [a, b] = await Promise.all([sleep('1h'), sleep('2h')]);
+                return 'done';
+            }";
+
+        var r1 = workflow.RunWorkflow(script, "main");
+        Assert.Equal(WorkflowStatus.Suspended, r1.Status);
+        // First suspension wins — the 1h sleep gets observed, not the 2h.
+        Assert.Equal(s_fixedStart.AddHours(1), r1.Suspension!.ResumeAt);
+
+        AdvanceTo(time, r1);
+        var r2 = workflow.ResumeWorkflow(script, r1.State!);
+        Assert.Equal(WorkflowStatus.Suspended, r2.Status);
+        // Now the second sleep is observed on the rerun.
+        Assert.Equal(s_fixedStart.AddHours(1).AddHours(2), r2.Suspension!.ResumeAt);
+
+        AdvanceTo(time, r2);
+        var r3 = workflow.ResumeWorkflow(script, r2.State!);
+        Assert.Equal("done", r3.Value!.AsString());
+    }
+
     [Fact]
     public void StepPolicy_ByName_ResolvesFromProvider()
     {

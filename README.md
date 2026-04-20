@@ -235,6 +235,25 @@ For callers using `IHttpClientFactory`, resolve the client from the factory and 
 .UseHttpClient(factory.CreateClient("jint-workflows"))
 ```
 
+### Fan-out / Fan-in with `Promise.all` and `Promise.race`
+
+Standard JavaScript `Promise.all` and `Promise.race` work over step and suspend calls. Each call takes the next journal slot in scheduling order, so replays are deterministic.
+
+```javascript
+async function main() {
+    const [orders, customers, inventory] = await Promise.all([
+        fetchOrders(),
+        fetchCustomers(),
+        fetchInventory(),
+    ]);
+    return { orders, customers, inventory };
+}
+```
+
+- **Errors:** standard JS — `Promise.all` rejects on first throw, `Promise.race` on first settle.
+- **Mixed step + suspend:** any steps that complete are journaled; the first suspension is observed and the workflow pauses. On resume, replay fast-forwards the completed steps and the suspended one runs again.
+- **Multiple suspensions:** first-scheduled suspension wins. Subsequent suspensions are re-encountered on later resumes — the workflow naturally processes them one cycle at a time.
+
 ### Script Versioning
 
 The script is **not stored** in the serialized state. You provide it at both start and resume time. This means you can update the script between suspensions — fix bugs, add behavior after a suspend point — as long as the journal shape remains compatible (same sequence of step/suspend calls up to the resume point).
