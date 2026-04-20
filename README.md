@@ -56,9 +56,9 @@ var json = result.State!.Serialize();  // persist anywhere
 var resumed = workflow.ResumeWorkflow(script, json);
 ```
 
-**👉 [Getting Started Guide](https://foundatiofx.github.io/Jint.Workflows/guide/getting-started)** — step-by-step setup, step functions, suspend functions, and replay.
+**👉 [Getting Started Guide](https://workflow.foundatio.dev/guide/getting-started)** — step-by-step setup, step functions, suspend functions, and replay.
 
-**📖 [Complete Documentation](https://foundatiofx.github.io/Jint.Workflows/)**
+**📖 [Complete Documentation](https://workflow.foundatio.dev/)**
 
 ## 📦 CI Packages (Feedz)
 
@@ -87,7 +87,7 @@ Or add to your `NuGet.config`:
 
 ## 🤝 Contributing
 
-Contributions are welcome! See the [documentation](https://foundatiofx.github.io/Jint.Workflows/) for how the engine works and what edits are safe across versions.
+Contributions are welcome! See the [documentation](https://workflow.foundatio.dev/) for how the engine works and what edits are safe across versions.
 
 ## 🔗 Related Projects
 
