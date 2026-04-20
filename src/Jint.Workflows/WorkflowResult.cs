@@ -85,6 +85,40 @@ public sealed class WorkflowFaultedException : Exception
 }
 
 /// <summary>
+/// Thrown when a workflow is resumed with a script whose awaited operation
+/// sequence no longer matches the journal. See <c>docs/versioning.md</c>
+/// for safe vs. unsafe script edits.
+/// </summary>
+public sealed class JournalCompatibilityException : Exception
+{
+    public JournalCompatibilityException(int slotIndex, string expectedType, string expectedName, string encounteredType, string encounteredName)
+        : base(FormatMessage(slotIndex, expectedType, expectedName, encounteredType, encounteredName))
+    {
+        SlotIndex = slotIndex;
+        ExpectedType = expectedType;
+        ExpectedName = expectedName;
+        EncounteredType = encounteredType;
+        EncounteredName = encounteredName;
+    }
+
+    public int SlotIndex { get; }
+    public string ExpectedType { get; }
+    public string ExpectedName { get; }
+    public string EncounteredType { get; }
+    public string EncounteredName { get; }
+
+    private static string FormatMessage(int slotIndex, string expectedType, string expectedName, string encounteredType, string encounteredName)
+    {
+        var expected = string.IsNullOrEmpty(expectedName) ? expectedType : $"{expectedType}:{expectedName}";
+        var encountered = string.IsNullOrEmpty(encounteredName) ? encounteredType : $"{encounteredType}:{encounteredName}";
+        return $"Workflow journal is incompatible with the script at slot {slotIndex}. " +
+               $"Expected {expected} (from journal) but script scheduled {encountered}. " +
+               "The script was likely modified in a way that changes the sequence of awaited operations. " +
+               "See docs/versioning.md for safe script edits.";
+    }
+}
+
+/// <summary>
 /// Throw from a step function implementation to signal a transient failure.
 /// Instead of recording a permanent failure in the journal, the workflow
 /// suspends with <see cref="SuspensionInfo.ResumeAt"/> set to the retry time.

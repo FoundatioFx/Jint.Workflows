@@ -91,6 +91,11 @@ internal sealed class WorkflowTracker
 
         if (index < _journal.Count)
         {
+            var entry = _journal[index];
+            if (!string.Equals(entry.Type, "suspend", StringComparison.Ordinal))
+            {
+                throw new JournalCompatibilityException(index, entry.Type, entry.Name, "suspend", name);
+            }
             return _journalValues[index];
         }
 
@@ -140,6 +145,12 @@ internal sealed class WorkflowTracker
         if (index < _journal.Count)
         {
             var entry = _journal[index];
+            var isStepEntry = string.Equals(entry.Type, "step", StringComparison.Ordinal)
+                              || string.Equals(entry.Type, "step_error", StringComparison.Ordinal);
+            if (!isStepEntry || !string.Equals(entry.Name, name, StringComparison.Ordinal))
+            {
+                throw new JournalCompatibilityException(index, entry.Type, entry.Name, "step", name);
+            }
             if (string.Equals(entry.Type, "step_error", StringComparison.Ordinal))
             {
                 var errorMsg = JsonSerializer.Serialize(entry.ResultJson ?? "Step failed");

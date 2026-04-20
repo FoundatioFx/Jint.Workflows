@@ -502,18 +502,29 @@ public sealed class WorkflowEngine
         engine.SetValue("__wf_entry", entryFn);
         engine.SetValue("__wf_args", jsArgs);
 
-        engine.Evaluate(@"
-            (async function() {
-                try {
-                    var result = await __wf_entry.apply(null, __wf_args);
-                    __wf_onDone(result === undefined ? null : result);
-                } catch(e) {
-                    __wf_onFail(e);
-                }
-            })();
-        ");
+        try
+        {
+            engine.Evaluate(@"
+                (async function() {
+                    try {
+                        var result = await __wf_entry.apply(null, __wf_args);
+                        __wf_onDone(result === undefined ? null : result);
+                    } catch(e) {
+                        __wf_onFail(e);
+                    }
+                })();
+            ");
 
-        engine.Advanced.ProcessTasks();
+            engine.Advanced.ProcessTasks();
+        }
+        catch (JournalCompatibilityException jex)
+        {
+            return WorkflowResult.Faulted(jex);
+        }
+        catch (Jint.Runtime.JavaScriptException jsex) when (jsex.InnerException is JournalCompatibilityException jex)
+        {
+            return WorkflowResult.Faulted(jex);
+        }
 
         // continueAsNew is terminal for this run — return a fresh state.
         if (tracker.IsContinuedAsNew)

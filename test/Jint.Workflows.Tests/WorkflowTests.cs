@@ -1510,6 +1510,70 @@ public class WorkflowTests
     }
 
     // ============================================================
+    // Phase 6: Journal compatibility checks
+    // ============================================================
+
+    [Fact]
+    public void Compat_RenamedStep_ThrowsWithClearMessage()
+    {
+        var workflow = new WorkflowEngine();
+        workflow.RegisterStepFunction("oldName", _ => "result");
+        workflow.RegisterSuspendFunction("wait");
+
+        var v1 = @"async function main() { const x = await oldName(); await wait(); return x; }";
+        var r1 = workflow.RunWorkflow(v1, "main");
+        Assert.Equal(WorkflowStatus.Suspended, r1.Status);
+
+        // v2 renames the step in the already-journaled prefix — unsafe.
+        var workflow2 = new WorkflowEngine();
+        workflow2.RegisterStepFunction("newName", _ => "result");
+        workflow2.RegisterSuspendFunction("wait");
+        var v2 = @"async function main() { const x = await newName(); await wait(); return x; }";
+
+        var r2 = workflow2.ResumeWorkflow(v2, r1.State!);
+        Assert.Equal(WorkflowStatus.Faulted, r2.Status);
+        var ex = FindInner<JournalCompatibilityException>(r2.Exception!);
+        Assert.NotNull(ex);
+        Assert.Equal(0, ex!.SlotIndex);
+        Assert.Equal("oldName", ex.ExpectedName);
+        Assert.Equal("newName", ex.EncounteredName);
+    }
+
+    [Fact]
+    public void Compat_StepReplacedWithSuspend_ThrowsWithClearMessage()
+    {
+        var workflow = new WorkflowEngine();
+        workflow.RegisterStepFunction("load", _ => "data");
+        workflow.RegisterSuspendFunction("wait");
+
+        var v1 = @"async function main() { await load(); await wait(); return 'ok'; }";
+        var r1 = workflow.RunWorkflow(v1, "main");
+
+        // v2 swaps the step for a suspend in the journaled prefix — unsafe.
+        var workflow2 = new WorkflowEngine();
+        workflow2.RegisterSuspendFunction("load");
+        workflow2.RegisterSuspendFunction("wait");
+        var v2 = @"async function main() { await load(); await wait(); return 'ok'; }";
+
+        var r2 = workflow2.ResumeWorkflow(v2, r1.State!);
+        Assert.Equal(WorkflowStatus.Faulted, r2.Status);
+        var ex = FindInner<JournalCompatibilityException>(r2.Exception!);
+        Assert.NotNull(ex);
+        Assert.Equal("step", ex!.ExpectedType);
+    }
+
+    private static T? FindInner<T>(Exception ex) where T : Exception
+    {
+        Exception? e = ex;
+        while (e is not null)
+        {
+            if (e is T t) return t;
+            e = e.InnerException;
+        }
+        return null;
+    }
+
+    // ============================================================
     // Phase 5: continueAsNew
     // ============================================================
 
