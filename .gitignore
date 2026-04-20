@@ -20,6 +20,11 @@ artifacts/
 ## Claude Code
 .claude/
 
+## Docs site
+docs/node_modules/
+docs/.vitepress/dist/
+docs/.vitepress/cache/
+
 ## OS
 [Tt]humbs.db
 .DS_Store
