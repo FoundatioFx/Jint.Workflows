@@ -7,6 +7,6 @@
     <NoWarn>$(NoWarn);CS1591;xUnit1051</NoWarn>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="GitHubActionsTestLogger" Version="3.0.3" PrivateAssets="All" />
+    <PackageReference Include="GitHubActionsTestLogger" Version="3.0.4" PrivateAssets="All" />
   </ItemGroup>
 </Project>
